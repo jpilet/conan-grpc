@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 project(test_package)
 
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-conan_basic_setup()
+conan_basic_setup(TARGETS)
 
 if(MSVC)
   add_definitions(-D_WIN32_WINNT=0x600)
@@ -11,48 +11,27 @@ set(CMAKE_CXX_STANDARD 11)
 
 # Find Protobuf installation
 
-set(protobuf_MODULE_COMPATIBLE TRUE)
 find_package(Protobuf CONFIG REQUIRED)
-message(STATUS "Using protobuf ${protobuf_VERSION}")
-
-set(_PROTOBUF_LIBPROTOBUF protobuf::libprotobuf)
-set(_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
-
-# Find gRPC installation
 find_package(gRPC CONFIG REQUIRED)
-find_package(protoc CONFIG REQUIRED)
-message(STATUS "Using gRPC ${gRPC_VERSION}")
 
-set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+get_property(CPP_PLUGIN TARGET gRPC::grpc_cpp_plugin PROPERTY LOCATION)
 
-# Proto file
-get_filename_component(hw_proto "helloworld.proto" ABSOLUTE)
-get_filename_component(hw_proto_path "${hw_proto}" PATH)
+message(STATUS "CPP_PLUGIN: ${CPP_PLUGIN}")
 
-# Generated sources
-set(hw_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/helloworld.pb.cc")
-set(hw_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/helloworld.pb.h")
-set(hw_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/helloworld.grpc.pb.cc")
-set(hw_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/helloworld.grpc.pb.h")
-add_custom_command(
-      OUTPUT "${hw_proto_srcs}" "${hw_proto_hdrs}" "${hw_grpc_srcs}" "${hw_grpc_hdrs}"
-      COMMAND ${_PROTOBUF_PROTOC}
-      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
-        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
-        -I "${hw_proto_path}"
-        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
-        "${hw_proto}"
-      DEPENDS "${hw_proto}")
+add_executable(greeter_client_server helloworld.proto greeter_client_server.cc)
+protobuf_generate(
+    APPEND_PATH
+    LANGUAGE cpp
+    TARGET greeter_client_server)
+protobuf_generate(
+    APPEND_PATH
+    LANGUAGE grpc
+    PLUGIN "protoc-gen-grpc=${CPP_PLUGIN}"
+    TARGET greeter_client_server
+    OUT_VAR GENERATED_SRC
+    GENERATE_EXTENSIONS ".grpc.pb.h" ".grpc.pb.cc"
+    )
+target_link_libraries(greeter_client_server CONAN_PKG::protobuf CONAN_PKG::grpc)
+target_include_directories(greeter_client_server PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-# Build generated sources as an object library
-add_library(hw_proto_obj OBJECT ${hw_proto_srcs} ${hw_grpc_srcs})
-
-# Include generated *.pb.h files
-include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-
-# Targets greeter_[async_](client)
-foreach(_target greeter_client_server)
-# greeter_async_client greeter_async_server)
-  add_executable(${_target} "${_target}.cc" $<TARGET_OBJECTS:hw_proto_obj>)
-  target_link_libraries(${_target} gRPC::grpc++_unsecure)
-endforeach()
+message(STATUS "GENERATED_SRC: ${GENERATED_SRC}")
